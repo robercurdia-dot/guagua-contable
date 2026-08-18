@@ -43,7 +43,7 @@ def test_tipo_iva_invalido_devuelve_422():
                                   "precio": "100", "tipo_iva": "15"}])
     r = c.post("/facturas/emitir", json=mala)
     assert r.status_code == 422
-    assert "no vigente" in r.json()["detail"]
+    assert "no admitido" in r.json()["detail"]
 
 
 def test_fecha_sin_huso_es_rechazada():

@@ -1,38 +1,63 @@
 """
-Generacion del codigo QR tributario de la factura.
+Codigo QR tributario de la factura y URL del servicio de cotejo.
 
-El QR contiene una URL al servicio de cotejo de la sede electronica de la AEAT
-con los datos de la factura como parametros de query. La URL base cambia entre
-el entorno de PRUEBAS y el de PRODUCCION.
+Fuente de verdad: "Detalle de las especificaciones tecnicas del codigo QR de la
+factura y de la URL del servicio de cotejo o remision de informacion por parte
+del receptor de la factura", AEAT v0.5.0 (10/12/2025).
+Copia en docs/aeat/AEAT_especificaciones_QR_v0.5.0.pdf
 
-AVISO IMPORTANTE - ESTO SIGUE SIN CONFIRMAR.
-Los XSD y el WSDL oficiales que tenemos definen el SERVICIO DE SUMINISTRO
-(ver endpoints.py, esos si estan confirmados), pero NO especifican la URL de
-cotejo del QR: eso vive en el documento de especificaciones tecnicas del QR /
-anexo de la Orden HAC/1177/2024, que todavia no tenemos.
-
-Las constantes de abajo son una SUPOSICION. No dar por buena la factura
-impresa hasta contrastarlas con ese documento.
+CONFIRMADO contra ese documento (ya no son suposiciones):
+  - URLs base por modo y entorno (ver URLS mas abajo). OJO: el modo
+    NO-VERIFACTU usa un endpoint DISTINTO (ValidarQRNoVerifactu).
+  - Los cuatro parametros se llaman: nif, numserie, fecha, importe.
+  - Los valores van con "URL encoding" y codificacion UTF-8.
+  - Formato de fecha DD-MM-AAAA; importe NNNNNNNNN.DD.
+  - Nivel de correccion de errores M (medio), ISO/IEC 18004:2015.
+  - Tamano impreso entre 30x30 y 40x40 mm (art. 21 del Reglamento).
 """
 from __future__ import annotations
 
 from urllib.parse import urlencode
 
-# URLs de cotejo (confirmar contra doc vigente AEAT antes de produccion).
-URL_COTEJO_PRUEBAS = "https://prewww2.aeat.es/wlpl/TIKE-CONT/ValidarQR"
-URL_COTEJO_PRODUCCION = "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR"
+from .modos import ModoOperacion
+
+# Nivel de correccion de errores exigido por el Reglamento (art. 21).
+NIVEL_CORRECCION_ERRORES = "M"
+# Tamano impreso admitido, en milimetros.
+TAMANO_MIN_MM = 30
+TAMANO_MAX_MM = 40
+
+# URLs de cotejo: (modo, produccion) -> URL base.
+URLS = {
+    (ModoOperacion.VERIFACTU, False): "https://prewww2.aeat.es/wlpl/TIKE-CONT/ValidarQR",
+    (ModoOperacion.VERIFACTU, True): "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR",
+    (ModoOperacion.NO_VERIFACTU, False): "https://prewww2.aeat.es/wlpl/TIKE-CONT/ValidarQRNoVerifactu",
+    (ModoOperacion.NO_VERIFACTU, True): "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQRNoVerifactu",
+}
 
 
 def url_qr(
     *,
     nif_emisor: str,
     num_serie_factura: str,
-    fecha_expedicion: str,     # dd-mm-aaaa
-    importe_total: str,
+    fecha_expedicion: str,     # DD-MM-AAAA
+    importe_total: str,        # NNNNNNNNN.DD
+    modo: ModoOperacion = ModoOperacion.VERIFACTU,
     produccion: bool = False,
 ) -> str:
-    """Construye la URL de cotejo que se codifica en el QR."""
-    base = URL_COTEJO_PRODUCCION if produccion else URL_COTEJO_PRUEBAS
+    """
+    Construye la URL de cotejo que se codifica en el QR.
+
+    Por defecto apunta al entorno de PRUEBAS: hay que pedir produccion
+    explicitamente para no imprimir facturas contra el entorno real por
+    descuido.
+
+    El "URL encoding" no es cosmetico: un numero de serie con '&' (permitido)
+    rompe la URL si no se escapa a %26, y el receptor no puede cotejar la
+    factura. El propio documento de la AEAT muestra ese caso como ejemplo
+    erroneo.
+    """
+    base = URLS[(ModoOperacion(modo), produccion)]
     params = {
         "nif": nif_emisor,
         "numserie": num_serie_factura,
@@ -42,20 +67,22 @@ def url_qr(
     return f"{base}?{urlencode(params)}"
 
 
-def imagen_qr_png(url: str) -> bytes:
+def imagen_qr_png(url: str, escala: int = 4, borde: int = 2) -> bytes:
     """
-    Genera el PNG del QR a partir de la URL de cotejo.
-    Usa 'segno' (dependencia pura Python) con nivel de correccion de error 'M'.
+    PNG del QR. Nivel de correccion M, exigido por el Reglamento.
+    Al maquetar la factura hay que respetar el tamano de 30-40 mm.
     """
-    import segno  # import perezoso para no acoplar el modulo a la libreria
-
-    qr = segno.make(url, error="m")
     import io
+
+    import segno
+
+    qr = segno.make(url, error=NIVEL_CORRECCION_ERRORES.lower())
     buf = io.BytesIO()
-    qr.save(buf, kind="png", scale=4, border=2)
+    qr.save(buf, kind="png", scale=escala, border=borde)
     return buf.getvalue()
 
 
-# Leyendas obligatorias en la factura.
-LEYENDA_VERIFACTU = "VERI*FACTU - Factura verificable en la sede electronica de la AEAT"
+# Leyendas que deben acompanar al QR en la factura (art. 20 y 21).
+LEYENDA_VERIFACTU = "Factura verificable en la sede electronica de la AEAT"
+LEYENDA_VERIFACTU_CORTA = "VERI*FACTU"
 LEYENDA_QR = "QR tributario"

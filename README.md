@@ -26,10 +26,10 @@ Estado: **Fase 0–1** (esqueleto + motor Verifactu). Ver `docs/PLAN.md`.
 | Catalogo de errores AEAT | Cargado y clasificado por severidad |
 | Endpoints del web service | Confirmados desde el WSDL oficial |
 | Cliente SOAP + cola de envio | Pendiente (E1) |
-| URL de cotejo del QR | **Sin confirmar** (falta la spec del QR) |
+| Codigo QR | **Confirmado contra la spec oficial v0.5.0**, reproduce el vector de ejemplo |
 | Persistencia + auth multi-tenant | Pendiente (E5) |
 
-89 tests, `ruff` limpio.
+104 tests, `ruff` limpio.
 
 ## Documentacion oficial de la AEAT
 
@@ -107,6 +107,6 @@ Ver `docs/PLAN.md` (roadmap Fase 0–1).
 - [ ] Descargar diseno de registros + XSD oficiales *(en curso: cowork)*
 - [ ] Serializacion a XML contra el XSD (`verifactu/xml.py`)
 - [ ] Cliente del web service AEAT (pruebas) con cola de reintentos
-- [ ] Confirmar URL/parametros del QR contra la spec oficial
+- [x] Confirmar URL/parametros del QR contra la spec oficial
 - [ ] Persistencia + auth multi-tenant (E5)
 - [ ] Modelo 303 (E4)

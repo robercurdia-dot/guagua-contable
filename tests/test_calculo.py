@@ -9,11 +9,15 @@ from decimal import Decimal
 import pytest
 
 from app.facturacion import (
+    RECARGOS_ADMITIDOS,
+    TIPOS_IVA_ADMITIDOS,
     LineaCalculo,
     calcular_factura,
     formatear_num_serie,
+    recargo_por_defecto,
     redondear,
     siguiente_numero,
+    validar_recargo,
 )
 
 
@@ -115,6 +119,58 @@ def test_recargo_por_tipo_correcto():
         assert t.cuota_recargo == Decimal(rec), f"tipo {tipo}"
 
 
+# --------------------------------- recargo: casos de errores.properties
+def test_recargo_del_0_por_ciento_es_026_no_cero():
+    """AEAT 1170: al 0%, desde el 1-oct-2024 el recargo es 0,26, no 0."""
+    assert recargo_por_defecto(0) == Decimal("0.26")
+    t = calcular_factura([L(1, 100, 0, con_recargo=True)])
+    assert t.cuota_recargo == Decimal("0.26")
+
+
+def test_21_por_ciento_admite_tambien_175():
+    """AEAT 1162: al 21% se admite 5,2 o 1,75 (tabaco)."""
+    assert validar_recargo(21, "1.75") == Decimal("1.75")
+    t = calcular_factura([L(1, 100, 21, tipo_recargo=Decimal("1.75"))])
+    assert t.cuota_recargo == Decimal("1.75")
+    assert t.total == Decimal("122.75")
+
+
+def test_recargo_no_admitido_para_ese_tipo_falla():
+    with pytest.raises(ValueError, match="no admitido para IVA"):
+        validar_recargo(10, "5.2")
+    with pytest.raises(ValueError, match="no admitido para IVA"):
+        calcular_factura([L(1, 100, 4, tipo_recargo=Decimal("5.2"))])
+
+
+def test_tipos_historicos_se_admiten():
+    """Hacen falta para rectificar facturas de ejercicios anteriores."""
+    t = calcular_factura([L(1, 100, "5")])
+    assert t.cuota_iva == Decimal("5.00")
+    assert recargo_por_defecto("5") == Decimal("0.5")
+    assert validar_recargo("5", "0.62") == Decimal("0.62")
+
+
+def test_mismo_iva_con_recargos_distintos_son_grupos_separados():
+    """21% al 5,2 y 21% al 1,75 no pueden mezclarse en el desglose."""
+    t = calcular_factura([
+        L(1, 100, 21, con_recargo=True),
+        L(1, 100, 21, tipo_recargo=Decimal("1.75")),
+    ])
+    assert len(t.desglose) == 2
+    assert {d.tipo_recargo for d in t.desglose} == {Decimal("5.2"), Decimal("1.75")}
+    assert t.cuota_recargo == Decimal("6.95")  # 5.20 + 1.75
+
+
+def test_tipo_recargo_implica_recargo_sin_flag():
+    """Informar tipo_recargo basta; no hace falta con_recargo=True."""
+    t = calcular_factura([L(1, 100, 21, tipo_recargo=Decimal("5.2"))])
+    assert t.cuota_recargo == Decimal("5.20")
+
+
+def test_tabla_de_recargos_cubre_todos_los_tipos_admitidos():
+    assert set(RECARGOS_ADMITIDOS) == set(TIPOS_IVA_ADMITIDOS)
+
+
 def test_mismo_tipo_con_y_sin_recargo_son_grupos_distintos():
     t = calcular_factura([L(1, 100, 21), L(1, 100, 21, con_recargo=True)])
     assert len(t.desglose) == 2
@@ -129,8 +185,8 @@ def test_descuento_en_linea():
 
 
 # ---------------------------------------------------------------- errores
-def test_tipo_iva_no_vigente_falla():
-    with pytest.raises(ValueError, match="no vigente"):
+def test_tipo_iva_no_admitido_falla():
+    with pytest.raises(ValueError, match="no admitido"):
         calcular_factura([L(1, 100, 15)])
 
 

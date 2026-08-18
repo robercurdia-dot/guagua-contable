@@ -21,31 +21,67 @@ from decimal import ROUND_HALF_UP, Decimal
 
 DOS_DECIMALES = Decimal("0.01")
 
-# Tipos de IVA vigentes en Espana (%). 0 = exenta / no sujeta.
-#
-# LIMITACION CONOCIDA: la AEAT tambien admite tipos historicos/temporales
-# (5%, 2%, 7.5% -- ver errores 1160, 1166, 1169 en schemas/errores.properties)
-# para operaciones con fecha anterior. Esta tupla solo cubre los tipos vigentes,
-# asi que el sistema NO puede facturar operaciones antiguas con esos tipos.
-# Aceptable para el MVP (facturacion corriente); ampliar si hace falta emitir
-# rectificativas de ejercicios con tipos temporales.
+# ---------------------------------------------------------------- tipos
+# Tipos de IVA (%). 0 = tipo cero / exenta.
 TIPOS_IVA_VIGENTES = (Decimal("21"), Decimal("10"), Decimal("4"), Decimal("0"))
 
-# Recargo de equivalencia que corresponde a cada tipo de IVA (%).
+# Tipos temporales o historicos. Se ADMITEN (hacen falta para rectificar
+# facturas de ejercicios en que estuvieron vigentes), pero la AEAT valida que
+# la fecha caiga dentro de su ventana: si se usan fuera, responde 1194/1235/1236.
+# Esa validacion por fecha NO se hace aqui a proposito: preferimos dejar pasar
+# la rectificativa legitima y que la AEAT de un error preciso, antes que
+# bloquearla desde el sistema.
+TIPOS_IVA_HISTORICOS = (Decimal("7.5"), Decimal("5"), Decimal("2"))
+
+TIPOS_IVA_ADMITIDOS = TIPOS_IVA_VIGENTES + TIPOS_IVA_HISTORICOS
+
+# Recargo de equivalencia admitido para cada tipo de IVA (%).
+# El PRIMER valor de cada tupla es el habitual y se usa por defecto.
 #
-# LIMITACION CONOCIDA (validado contra schemas/errores.properties):
-#   - 1162: al 21% la AEAT admite 5,2 O BIEN 1,75 (este ultimo, labores del
-#     tabaco). Aqui se asume siempre 5,2.
-#   - 1170: al 0%, desde el 1-oct-2024 la AEAT solo admite 0,26, no 0. El valor
-#     de abajo es incorrecto para el caso raro de 0% CON recargo.
-# Ninguno de los dos casos se da en la facturacion corriente, pero hay que
-# resolverlos antes de dar por cerrada la epica E2.
-RECARGO_POR_TIPO = {
-    Decimal("21"): Decimal("5.2"),
-    Decimal("10"): Decimal("1.4"),
-    Decimal("4"): Decimal("0.5"),
-    Decimal("0"): Decimal("0"),
+# Verificado contra el catalogo oficial (schemas/errores.properties):
+#   1162: al 21% -> 5,2 o 1,75   (1,75 = labores del tabaco)
+#   1163: al 10% -> 1,4
+#   1164: al  4% -> 0,5
+#   1170: al  0% -> 0,26 desde el 1-oct-2024  (antes 0; ver 1165)
+#   1160/1167/1168: al 5% -> 0,5 o 0,62 segun fecha
+#   1166: al  2% -> 0,26   (1-oct-2024 a 31-dic-2024)
+#   1169: al 7,5% -> 1     (1-oct-2024 a 31-dic-2024)
+RECARGOS_ADMITIDOS: dict[Decimal, tuple[Decimal, ...]] = {
+    Decimal("21"): (Decimal("5.2"), Decimal("1.75")),
+    Decimal("10"): (Decimal("1.4"),),
+    Decimal("4"): (Decimal("0.5"),),
+    Decimal("0"): (Decimal("0.26"), Decimal("0")),
+    Decimal("7.5"): (Decimal("1"),),
+    Decimal("5"): (Decimal("0.5"), Decimal("0.62")),
+    Decimal("2"): (Decimal("0.26"),),
 }
+
+
+def recargo_por_defecto(tipo_iva) -> Decimal:
+    """Recargo de equivalencia habitual para un tipo de IVA."""
+    tipo = Decimal(str(tipo_iva))
+    if tipo not in RECARGOS_ADMITIDOS:
+        raise ValueError(f"Tipo de IVA no admitido: {tipo}%")
+    return RECARGOS_ADMITIDOS[tipo][0]
+
+
+def validar_recargo(tipo_iva, tipo_recargo) -> Decimal:
+    """
+    Comprueba que el recargo es uno de los admitidos para ese tipo de IVA.
+    Un recargo incoherente lo rechaza la AEAT (1162-1170, 1277).
+    """
+    tipo = Decimal(str(tipo_iva))
+    rec = Decimal(str(tipo_recargo))
+    admitidos = RECARGOS_ADMITIDOS.get(tipo)
+    if admitidos is None:
+        raise ValueError(f"Tipo de IVA no admitido: {tipo}%")
+    if rec not in admitidos:
+        permitidos = " o ".join(str(a) for a in admitidos)
+        raise ValueError(
+            f"Recargo de equivalencia {rec}% no admitido para IVA {tipo}%; "
+            f"la AEAT solo acepta {permitidos}"
+        )
+    return rec
 
 
 def redondear(valor) -> Decimal:
@@ -66,7 +102,23 @@ class LineaCalculo:
     precio: Decimal
     tipo_iva: Decimal = Decimal("21")
     con_recargo: bool = False
+    # Recargo explicito. Si se deja en None y con_recargo=True, se aplica el
+    # habitual del tipo. Hay que informarlo para los casos que no son el
+    # habitual, p.ej. 1,75% al 21% en labores del tabaco (AEAT 1162).
+    tipo_recargo: Decimal | None = None
     descuento_pct: Decimal = Decimal("0")
+
+    @property
+    def lleva_recargo(self) -> bool:
+        return self.con_recargo or self.tipo_recargo is not None
+
+    def recargo_aplicable(self) -> Decimal:
+        """Recargo a aplicar a esta linea (0 si no lleva)."""
+        if not self.lleva_recargo:
+            return Decimal("0")
+        if self.tipo_recargo is not None:
+            return validar_recargo(self.tipo_iva, self.tipo_recargo)
+        return recargo_por_defecto(self.tipo_iva)
 
     def base(self) -> Decimal:
         """Base imponible de la linea (cantidad x precio - descuento), a 2 dec."""
@@ -116,26 +168,30 @@ def calcular_factura(lineas: Iterable[LineaCalculo]) -> TotalesFactura:
     lineas = list(lineas)
     for ln in lineas:
         tipo = Decimal(str(ln.tipo_iva))
-        if tipo not in RECARGO_POR_TIPO:
+        if tipo not in TIPOS_IVA_ADMITIDOS:
             raise ValueError(
-                f"Tipo de IVA no vigente: {tipo}%. Vigentes: "
+                f"Tipo de IVA no admitido: {tipo}%. Vigentes: "
                 + ", ".join(f"{t}%" for t in TIPOS_IVA_VIGENTES)
+                + "; historicos: "
+                + ", ".join(f"{t}%" for t in TIPOS_IVA_HISTORICOS)
             )
+        ln.recargo_aplicable()  # valida la combinacion tipo/recargo
         if Decimal(str(ln.cantidad)) < 0:
             raise ValueError(f"Cantidad negativa en la linea '{ln.descripcion}'")
 
-    # Agrupar bases por (tipo_iva, con_recargo)
-    grupos: dict[tuple[Decimal, bool], Decimal] = {}
+    # Agrupar bases por (tipo_iva, tipo_recargo_aplicado). El recargo forma
+    # parte de la clave: dos lineas al 21% con recargos distintos (5,2 y 1,75)
+    # son grupos separados del desglose.
+    grupos: dict[tuple[Decimal, Decimal], Decimal] = {}
     for ln in lineas:
-        clave = (Decimal(str(ln.tipo_iva)), ln.con_recargo)
+        clave = (Decimal(str(ln.tipo_iva)), ln.recargo_aplicable())
         grupos[clave] = grupos.get(clave, Decimal("0")) + ln.base()
 
     desglose: list[DesgloseIVA] = []
-    for (tipo_iva, con_recargo), base in sorted(
-        grupos.items(), key=lambda kv: (-kv[0][0], kv[0][1])
+    for (tipo_iva, tipo_recargo), base in sorted(
+        grupos.items(), key=lambda kv: (-kv[0][0], -kv[0][1])
     ):
         cuota = redondear(base * tipo_iva / Decimal("100"))
-        tipo_recargo = RECARGO_POR_TIPO[tipo_iva] if con_recargo else Decimal("0")
         cuota_recargo = redondear(base * tipo_recargo / Decimal("100"))
         desglose.append(DesgloseIVA(
             tipo_iva=tipo_iva,

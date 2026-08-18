@@ -31,6 +31,11 @@ class LineaIn(BaseModel):
     precio: Decimal
     tipo_iva: Decimal = Decimal("21")
     con_recargo: bool = False
+    tipo_recargo: Decimal | None = Field(
+        None,
+        description="Recargo de equivalencia explicito. Solo para casos que no "
+                    "son el habitual del tipo (p.ej. 1.75 al 21%, tabaco).",
+    )
     descuento_pct: Decimal = Decimal("0")
 
 
