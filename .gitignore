@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+dist/
+build/
+# Certificados y secretos: NUNCA en el repo
+*.pem
+*.p12
+*.pfx
+certs/
