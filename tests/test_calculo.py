@@ -19,6 +19,19 @@ from app.facturacion import (
     siguiente_numero,
     validar_recargo,
 )
+from app.verifactu.xml import (
+    MAX_DETALLES_DESGLOSE,
+    DetalleDesglose,
+    Encadenamiento,
+    RegistroAltaXML,
+    SistemaInformatico,
+)
+
+SIF_TEST = SistemaInformatico(
+    nombre_razon="The Guagua Project SL", nif="B12345678",
+    nombre_sistema="Guagua Contable", id_sistema="01",
+    version="0.1.0", numero_instalacion="INST-001",
+)
 
 
 def L(cantidad, precio, tipo_iva="21", **kw):
@@ -169,6 +182,76 @@ def test_tipo_recargo_implica_recargo_sin_flag():
 
 def test_tabla_de_recargos_cubre_todos_los_tipos_admitidos():
     assert set(RECARGOS_ADMITIDOS) == set(TIPOS_IVA_ADMITIDOS)
+
+
+# ------------------------- limite del desglose (XSD maxOccurs="12")
+def test_combinaciones_posibles_de_tipo_y_recargo_caben_en_el_desglose():
+    """
+    DesgloseType/DetalleDesglose tiene maxOccurs="12" en el XSD. Cada grupo del
+    desglose es una combinacion (tipo de IVA, recargo aplicado), asi que hay que
+    saber cuantas combinaciones distintas son posibles: si pudieran superar 12,
+    una factura legitima seria irrepresentable y la AEAT la rechazaria por
+    esquema (4102) antes de llegar a ninguna validacion de negocio.
+    """
+    # cada tipo puede ir sin recargo, o con cualquiera de sus recargos admitidos
+    combinaciones = sum(1 + len(recs) for recs in RECARGOS_ADMITIDOS.values())
+    # 7 tipos; 21% y 5% tienen 2 recargos, 0% tiene 2, el resto 1
+    assert combinaciones == 17, f"combinaciones posibles: {combinaciones}"
+    assert combinaciones > MAX_DETALLES_DESGLOSE, (
+        "Si todas las combinaciones cupieran en el desglose, este test sobra"
+    )
+
+
+def test_desglose_dentro_del_limite_del_xsd():
+    """12 grupos distintos: el maximo que admite el esquema."""
+    lineas = [
+        L(1, 100, "21"), L(1, 100, "21", con_recargo=True),
+        L(1, 100, "21", tipo_recargo=Decimal("1.75")),
+        L(1, 100, "10"), L(1, 100, "10", con_recargo=True),
+        L(1, 100, "4"), L(1, 100, "4", con_recargo=True),
+        L(1, 100, "0"), L(1, 100, "0", con_recargo=True),
+        L(1, 100, "5"), L(1, 100, "5", con_recargo=True),
+        L(1, 100, "2"),
+    ]
+    t = calcular_factura(lineas)
+    assert len(t.desglose) == MAX_DETALLES_DESGLOSE
+
+
+def test_desglose_que_excede_el_limite_del_xsd_se_detecta():
+    """
+    13 grupos distintos. El calculo los produce sin quejarse (es aritmetica
+    correcta), pero el XML NO puede representarlos: quien tiene que cazarlo es
+    la construccion del registro, no el calculo.
+    """
+    lineas = [
+        L(1, 100, "21"), L(1, 100, "21", con_recargo=True),
+        L(1, 100, "21", tipo_recargo=Decimal("1.75")),
+        L(1, 100, "10"), L(1, 100, "10", con_recargo=True),
+        L(1, 100, "4"), L(1, 100, "4", con_recargo=True),
+        L(1, 100, "0"), L(1, 100, "0", con_recargo=True),
+        L(1, 100, "5"), L(1, 100, "5", con_recargo=True),
+        L(1, 100, "5", tipo_recargo=Decimal("0.62")),
+        L(1, 100, "2"),
+    ]
+    t = calcular_factura(lineas)
+    assert len(t.desglose) == 13 > MAX_DETALLES_DESGLOSE
+
+    # y al pasarlo al XML, salta antes de enviar nada a la AEAT
+    detalles = tuple(
+        DetalleDesglose(base_imponible=str(d.base), tipo_impositivo=str(d.tipo_iva),
+                        cuota_repercutida=str(d.cuota))
+        for d in t.desglose
+    )
+    with pytest.raises(ValueError, match="entre 1 y 12"):
+        RegistroAltaXML(
+            id_emisor="B12345678", num_serie_factura="A/2026-0001",
+            fecha_expedicion="15-01-2026", nombre_razon_emisor="X",
+            tipo_factura="F2", descripcion_operacion="X",
+            desglose=detalles, cuota_total="0.00", importe_total="0.00",
+            encadenamiento=Encadenamiento(primer_registro=True),
+            sistema_informatico=SIF_TEST,
+            fecha_hora_huso="2026-01-15T10:30:00+01:00", huella="0" * 64,
+        )
 
 
 def test_mismo_tipo_con_y_sin_recargo_son_grupos_distintos():

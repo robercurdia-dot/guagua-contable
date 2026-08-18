@@ -15,3 +15,10 @@ class Organizacion(Base, TimestampMixin):
     razon_social: Mapped[str] = mapped_column(String(255))
     # modo Verifactu / No-Verifactu (ver app.verifactu.modos.ModoOperacion)
     modo_operacion: Mapped[str] = mapped_column(String(20), default="VERIFACTU")
+
+    # Punta de la cadena Verifactu del SIF. Se actualiza al emitir, bajo el
+    # bloqueo de esta misma fila, para que dos emisiones simultaneas no puedan
+    # bifurcar la cadena. Vacio = todavia no hay ningun registro.
+    cadena_huella: Mapped[str] = mapped_column(String(64), default="")
+    cadena_num_serie: Mapped[str] = mapped_column(String(60), default="")
+    cadena_fecha_expedicion: Mapped[str] = mapped_column(String(10), default="")

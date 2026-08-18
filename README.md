@@ -21,7 +21,9 @@ Estado: **Fase 0–1** (esqueleto + motor Verifactu). Ver `docs/PLAN.md`.
 | Calculo de factura (IVA, recargo, totales) | Implementado y testeado |
 | Emision + anulacion encadenada | Implementado y testeado |
 | API de facturacion | Implementada (sin persistencia todavia) |
-| Migraciones + RLS + append-only | Escritas, **sin verificar contra un Postgres vivo** |
+| Migraciones + RLS + append-only | **Verificadas contra Postgres 16 real** |
+| Emision persistida | Implementada, con bloqueo que impide bifurcar la cadena |
+| Usuarios, roles y auth de API | Pendiente (resto de E5) |
 | Serializacion XML | **Valida contra el XSD oficial de la AEAT** |
 | Catalogo de errores AEAT | Cargado y clasificado por severidad |
 | Endpoints del web service | Confirmados desde el WSDL oficial |
@@ -29,7 +31,16 @@ Estado: **Fase 0–1** (esqueleto + motor Verifactu). Ver `docs/PLAN.md`.
 | Codigo QR | **Confirmado contra la spec oficial v0.5.0**, reproduce el vector de ejemplo |
 | Persistencia + auth multi-tenant | Pendiente (E5) |
 
-104 tests, `ruff` limpio.
+139 tests, `ruff` limpio. 32 de ellos necesitan Postgres y se saltan solos si
+no hay base a mano.
+
+### Base de datos para desarrollo
+
+```bash
+brew install postgresql@16 && brew services start postgresql@16
+createdb -O guagua guagua && createdb -O guagua guagua_test
+alembic upgrade head
+```
 
 ## Documentacion oficial de la AEAT
 
