@@ -23,15 +23,16 @@ Estado: **Fase 0–1** (esqueleto + motor Verifactu). Ver `docs/PLAN.md`.
 | API de facturacion | Implementada (sin persistencia todavia) |
 | Migraciones + RLS + append-only | **Verificadas contra Postgres 16 real** |
 | Emision persistida | Implementada, con bloqueo que impide bifurcar la cadena |
-| Usuarios, roles y auth de API | Pendiente (resto de E5) |
+| Usuarios, roles y onboarding | Pendiente (resto de E5) |
 | Serializacion XML | **Valida contra el XSD oficial de la AEAT** |
 | Catalogo de errores AEAT | Cargado y clasificado por severidad |
 | Endpoints del web service | Confirmados desde el WSDL oficial |
-| Cliente SOAP + cola de envio | Pendiente (E1) |
+| Cliente SOAP | Implementado y probado con mocks; **falta el certificado** |
+| Auth de la API | Clave por cabecera (minima, no es multiusuario) |
 | Codigo QR | **Confirmado contra la spec oficial v0.5.0**, reproduce el vector de ejemplo |
 | Persistencia + auth multi-tenant | Pendiente (E5) |
 
-139 tests, `ruff` limpio. 32 de ellos necesitan Postgres y se saltan solos si
+164 tests, `ruff` limpio. 32 de ellos necesitan Postgres y se saltan solos si
 no hay base a mano.
 
 ### Base de datos para desarrollo

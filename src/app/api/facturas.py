@@ -10,9 +10,10 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from app.api.auth import requiere_api_key
 from app.facturacion import (
     LineaCalculo,
     anular_factura,
@@ -22,7 +23,11 @@ from app.facturacion import (
 from app.verifactu.huella import EslabonCadena
 from app.verifactu.qr import LEYENDA_VERIFACTU, url_qr
 
-router = APIRouter(prefix="/facturas", tags=["facturas"])
+router = APIRouter(
+    prefix="/facturas",
+    tags=["facturas"],
+    dependencies=[Depends(requiere_api_key)],
+)
 
 
 class LineaIn(BaseModel):
