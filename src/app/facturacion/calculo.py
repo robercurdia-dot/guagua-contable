@@ -22,9 +22,24 @@ from decimal import ROUND_HALF_UP, Decimal
 DOS_DECIMALES = Decimal("0.01")
 
 # Tipos de IVA vigentes en Espana (%). 0 = exenta / no sujeta.
+#
+# LIMITACION CONOCIDA: la AEAT tambien admite tipos historicos/temporales
+# (5%, 2%, 7.5% -- ver errores 1160, 1166, 1169 en schemas/errores.properties)
+# para operaciones con fecha anterior. Esta tupla solo cubre los tipos vigentes,
+# asi que el sistema NO puede facturar operaciones antiguas con esos tipos.
+# Aceptable para el MVP (facturacion corriente); ampliar si hace falta emitir
+# rectificativas de ejercicios con tipos temporales.
 TIPOS_IVA_VIGENTES = (Decimal("21"), Decimal("10"), Decimal("4"), Decimal("0"))
 
 # Recargo de equivalencia que corresponde a cada tipo de IVA (%).
+#
+# LIMITACION CONOCIDA (validado contra schemas/errores.properties):
+#   - 1162: al 21% la AEAT admite 5,2 O BIEN 1,75 (este ultimo, labores del
+#     tabaco). Aqui se asume siempre 5,2.
+#   - 1170: al 0%, desde el 1-oct-2024 la AEAT solo admite 0,26, no 0. El valor
+#     de abajo es incorrecto para el caso raro de 0% CON recargo.
+# Ninguno de los dos casos se da en la facturacion corriente, pero hay que
+# resolverlos antes de dar por cerrada la epica E2.
 RECARGO_POR_TIPO = {
     Decimal("21"): Decimal("5.2"),
     Decimal("10"): Decimal("1.4"),

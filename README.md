@@ -22,10 +22,23 @@ Estado: **Fase 0–1** (esqueleto + motor Verifactu). Ver `docs/PLAN.md`.
 | Emision + anulacion encadenada | Implementado y testeado |
 | API de facturacion | Implementada (sin persistencia todavia) |
 | Migraciones + RLS + append-only | Escritas, **sin verificar contra un Postgres vivo** |
-| Serializacion XML / envio AEAT | Pendiente (bloqueado: faltan XSD oficiales) |
+| Serializacion XML | **Valida contra el XSD oficial de la AEAT** |
+| Catalogo de errores AEAT | Cargado y clasificado por severidad |
+| Endpoints del web service | Confirmados desde el WSDL oficial |
+| Cliente SOAP + cola de envio | Pendiente (E1) |
+| URL de cotejo del QR | **Sin confirmar** (falta la spec del QR) |
 | Persistencia + auth multi-tenant | Pendiente (E5) |
 
-56 tests, `ruff` limpio.
+89 tests, `ruff` limpio.
+
+## Documentacion oficial de la AEAT
+
+En `src/app/verifactu/schemas/` estan los XSD, el WSDL y el catalogo de errores
+oficiales. Son la fuente de verdad: el codigo se valida contra ellos, no contra
+lo que creamos recordar.
+
+El unico cambio que se les ha hecho es redirigir el import de
+`xmldsig-core-schema.xsd` de w3.org al fichero local, para poder validar sin red.
 
 ## El motor Verifactu (corazon del producto)
 

@@ -23,6 +23,7 @@ from app.verifactu.huella import (
     huella_registro_anulacion,
     verificar_cadena,
 )
+from app.verifactu.xml import Encadenamiento, RegistroAnterior
 
 from .calculo import LineaCalculo, TotalesFactura, calcular_factura
 from .numeracion import formatear_num_serie, siguiente_numero
@@ -58,10 +59,37 @@ class FacturaEmitida:
     huella: str
     huella_anterior: str
     fecha_hora_huso: str
+    registro_anterior: RegistroAnterior | None = None
 
     @property
     def cadena_verifactu(self) -> EslabonCadena:
         return EslabonCadena(huella=self.huella, huella_anterior=self.huella_anterior)
+
+    def como_registro_anterior(self) -> RegistroAnterior:
+        """
+        Identidad completa de este registro para encadenar el SIGUIENTE.
+
+        El XSD (EncadenamientoFacturaAnteriorType) exige NIF + num/serie + fecha
+        ademas de la huella: no basta con arrastrar la huella anterior.
+        """
+        return RegistroAnterior(
+            id_emisor=self.nif_emisor,
+            num_serie_factura=self.num_serie_factura,
+            fecha_expedicion=fecha_aeat(self.fecha_expedicion),
+            huella=self.huella,
+        )
+
+    @property
+    def encadenamiento(self) -> Encadenamiento:
+        """Bloque Encadenamiento de ESTE registro, tal como va en el XML."""
+        if self.huella_anterior == HUELLA_INICIAL:
+            return Encadenamiento(primer_registro=True)
+        if self.registro_anterior is None:
+            raise ValueError(
+                "Registro no inicial sin identidad del anterior: el XML exige "
+                "NIF, num/serie y fecha del registro previo, no solo su huella"
+            )
+        return Encadenamiento(anterior=self.registro_anterior)
 
 
 def emitir_factura(
@@ -74,12 +102,23 @@ def emitir_factura(
     generado_en: datetime,
     tipo_factura: str = "F1",
     huella_anterior: str = HUELLA_INICIAL,
+    registro_anterior: RegistroAnterior | None = None,
 ) -> FacturaEmitida:
     """
     Emite una factura y genera su registro de facturacion de ALTA.
 
     huella_anterior: huella del ultimo registro del SIF ("" si es el primero).
+                     Es lo unico que entra en el calculo de la huella.
+    registro_anterior: identidad completa del registro previo. Necesaria para
+                     construir el XML (el XSD la exige); se obtiene con
+                     FacturaEmitida.como_registro_anterior().
     """
+    if huella_anterior and registro_anterior is not None:
+        if registro_anterior.huella != huella_anterior:
+            raise ValueError(
+                "Incoherencia: huella_anterior no coincide con la huella del "
+                "registro_anterior facilitado"
+            )
     totales = calcular_factura(lineas)
     numero = siguiente_numero(ultimo_numero)
     num_serie = formatear_num_serie(serie, numero)
@@ -108,6 +147,7 @@ def emitir_factura(
         huella=huella,
         huella_anterior=huella_anterior,
         fecha_hora_huso=f_gen,
+        registro_anterior=registro_anterior,
     )
 
 

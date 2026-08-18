@@ -5,8 +5,14 @@ El QR contiene una URL al servicio de cotejo de la sede electronica de la AEAT
 con los datos de la factura como parametros de query. La URL base cambia entre
 el entorno de PRUEBAS y el de PRODUCCION.
 
-AVISO: las URLs base y el nombre exacto de los parametros deben confirmarse
-contra la documentacion vigente de la AEAT antes de produccion.
+AVISO IMPORTANTE - ESTO SIGUE SIN CONFIRMAR.
+Los XSD y el WSDL oficiales que tenemos definen el SERVICIO DE SUMINISTRO
+(ver endpoints.py, esos si estan confirmados), pero NO especifican la URL de
+cotejo del QR: eso vive en el documento de especificaciones tecnicas del QR /
+anexo de la Orden HAC/1177/2024, que todavia no tenemos.
+
+Las constantes de abajo son una SUPOSICION. No dar por buena la factura
+impresa hasta contrastarlas con ese documento.
 """
 from __future__ import annotations
 
