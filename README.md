@@ -1,124 +1,130 @@
 # guagua-contable
 
-Software de contabilidad y facturacion para autonomos, pymes y despachos, con
-**Verifactu** como base legal. Producto de The Guagua Project · AI.
+Motor de facturación con cumplimiento **Verifactu** (AEAT, España).
+Python 3.11+ · FastAPI · PostgreSQL 16 · SQLAlchemy 2.
 
-Estado: **Fase 0–1** (esqueleto + motor Verifactu). Ver `docs/PLAN.md`.
+Calcula una factura, la encadena con el registro anterior, genera el XML y lo
+valida contra el esquema oficial de la Agencia Tributaria, listo para enviarlo
+a su servicio web. El sistema de facturación tiene que cumplir la normativa
+antifraude española (obligatoria desde enero de 2027 para sociedades y julio de
+2027 para autónomos), y buena parte del trabajo está en que ese cumplimiento
+sea verificable y no una suposición.
 
-## Arquitectura
+> **Estado: en desarrollo.** Todavía no se ha enviado ningún registro a la AEAT:
+> falta el certificado electrónico, y el cliente SOAP está probado con
+> respuestas simuladas. No es un producto en producción.
 
-- **API**: Python 3.12 + FastAPI
-- **Datos**: PostgreSQL 16 + SQLAlchemy 2 (Alembic para migraciones)
-- **Motor Verifactu**: paquete aislado en `src/app/verifactu/` (sin dependencias
-  de la app: hashlib, segno para QR). Se puede extraer a servicio propio.
-- **Cola/async**: Redis (para el envio a AEAT con reintentos)
+## Decisiones de diseño que merecen mención
+
+**La huella se valida contra los ejemplos oficiales, no contra mi implementación.**
+El hash encadenado de cada registro reproduce bit a bit los tres vectores de la
+especificación de la AEAT. Están fijados como tests: si el cálculo se desvía,
+la AEAT marcaría el registro «aceptado con errores».
+
+**El XML se valida contra el XSD oficial.** El orden de los elementos lo manda
+el esquema. Esto reveló un fallo real del modelo inicial: el encadenamiento
+exige la identidad completa del registro anterior (NIF, número y fecha), no solo
+su huella, y el primer registro lleva `PrimerRegistro` en lugar de una huella
+vacía.
+
+**El dinero es `Decimal` con `ROUND_HALF_UP`, nunca `float`.** La cuota de IVA
+se calcula sobre la base agregada por tipo, no línea a línea, para no acumular
+error de redondeo. Estos importes entran literalmente en la huella: un céntimo
+de diferencia la cambia.
+
+**La cadena de registros no se bifurca con emisiones concurrentes.** La cadena
+es única por obligado, no por serie. Emitir bloquea la fila de la organización
+(`SELECT … FOR UPDATE`), que además guarda la punta de la cadena. Un test lanza
+20 emisiones simultáneas en hilos y conexiones separadas; quitando el bloqueo,
+los tres tests de concurrencia fallan.
+
+**Aislamiento entre empresas en la base de datos.** Row-Level Security forzado,
+con la empresa fijada por transacción (`set_config`). Sin empresa fijada no se
+ve nada: falla en cerrado. Los registros de facturación son inalterables por
+triggers. Todo verificado contra un Postgres real; una de esas verificaciones
+descubrió que `SET LOCAL` no admite parámetros vinculados.
+
+**Interpretar la respuesta de la AEAT sin duplicar registros.** Un registro
+«aceptado con errores» ya está almacenado en la AEAT; reenviarlo crea un
+duplicado. El tipo `Respuesta` separa `almacenado_en_aeat`, `debe_reenviarse` y
+`necesita_subsanacion`, y solo se reintentan automáticamente los fallos de red
+y 5xx.
 
 ## Estado
 
 | Pieza | Estado |
 |---|---|
-| Motor de huella Verifactu | **Validado contra los 3 vectores oficiales AEAT** |
-| Calculo de factura (IVA, recargo, totales) | Implementado y testeado |
-| Emision + anulacion encadenada | Implementado y testeado |
-| API de facturacion | Implementada (sin persistencia todavia) |
-| Migraciones + RLS + append-only | **Verificadas contra Postgres 16 real** |
-| Emision persistida | Implementada, con bloqueo que impide bifurcar la cadena |
-| Usuarios, roles y onboarding | Pendiente (resto de E5) |
-| Serializacion XML | **Valida contra el XSD oficial de la AEAT** |
-| Catalogo de errores AEAT | Cargado y clasificado por severidad |
-| Endpoints del web service | Confirmados desde el WSDL oficial |
-| Cliente SOAP | Implementado y probado con mocks; **falta el certificado** |
-| Auth de la API | Clave por cabecera (minima, no es multiusuario) |
-| Codigo QR | **Confirmado contra la spec oficial v0.5.0**, reproduce el vector de ejemplo |
-| Persistencia + auth multi-tenant | Pendiente (E5) |
+| Huella y encadenamiento | Validado contra los 3 vectores oficiales |
+| XML de alta y anulación | Valida contra el XSD oficial |
+| Código QR | Contrastado con la especificación v0.5.0 y su ejemplo |
+| Cálculo de factura (IVA, recargo de equivalencia) | Implementado y testeado |
+| Emisión persistida y concurrencia | Implementado, probado con Postgres real |
+| RLS y registros inalterables | Verificado con Postgres real |
+| Cliente SOAP + interpretación de respuesta | Probado con respuestas simuladas |
+| Envío real a la AEAT | **Pendiente: certificado electrónico** |
+| La API usa la emisión persistida | Pendiente (hoy calcula y devuelve) |
+| Firma XAdES (modo No-Verifactu) | Pendiente |
+| Usuarios, roles y multiempresa | Pendiente; hoy hay una clave de API única |
+| Contabilidad de partida doble, conciliación, modelo 303 | Fases posteriores, no iniciadas |
 
-164 tests, `ruff` limpio. 32 de ellos necesitan Postgres y se saltan solos si
-no hay base a mano.
+**164 tests**, `ruff` limpio y CI en GitHub Actions con Postgres.
 
-### Base de datos para desarrollo
+## Estructura
 
-```bash
-brew install postgresql@16 && brew services start postgresql@16
-createdb -O guagua guagua && createdb -O guagua guagua_test
-alembic upgrade head
+```
+src/app/
+  verifactu/     Motor aislado: huella, XML, QR, SOAP, errores, esquemas AEAT
+  facturacion/   Cálculo, numeración, emisión y anulación
+  servicios/     Emisión persistida y contexto de empresa (tenant)
+  models/        SQLAlchemy 2
+  api/           FastAPI: emitir, anular, verificar cadena
+migrations/      Alembic: esquema, RLS y triggers de inalterabilidad
+docs/            Plan técnico y documentación oficial de la AEAT
+tests/
 ```
 
-## Documentacion oficial de la AEAT
+`verifactu/` no depende del resto de la aplicación. Los XSD, el WSDL y el
+catálogo de errores oficiales están en `src/app/verifactu/schemas/`; el único
+cambio es redirigir el import de `xmldsig-core-schema.xsd` a una copia local
+para poder validar sin red.
 
-En `src/app/verifactu/schemas/` estan los XSD, el WSDL y el catalogo de errores
-oficiales. Son la fuente de verdad: el codigo se valida contra ellos, no contra
-lo que creamos recordar.
-
-El unico cambio que se les ha hecho es redirigir el import de
-`xmldsig-core-schema.xsd` de w3.org al fichero local, para poder validar sin red.
-
-## El motor Verifactu (corazon del producto)
-
-`src/app/verifactu/`:
-
-- `huella.py` — hash chain SHA-256 (encadenamiento de registros).
-  **Gate de la Fase 0: SUPERADO** — reproduce bit a bit los 3 vectores de
-  ejemplo oficiales de la AEAT (spec 0.1.2). Cubre alta, anulacion y evento.
-- `registros.py` — construccion de registros de alta / anulacion.
-- `qr.py` — URL de cotejo AEAT + PNG del QR.
-- `modos.py` — VERIFACTU vs NO_VERIFACTU.
-
-`src/app/facturacion/`:
-
-- `calculo.py` — bases, desglose de IVA, recargo de equivalencia y totales.
-  Todo con `Decimal` y `ROUND_HALF_UP`; la cuota se calcula sobre la base
-  AGREGADA por tipo, no linea a linea (evita acumular error de redondeo).
-  **Estos importes entran literalmente en la huella**: un centimo de diferencia
-  cambia el hash y la AEAT marca el registro "Aceptado con errores".
-- `numeracion.py` — numeracion correlativa por serie.
-- `emision.py` — emitir / anular generando el registro encadenado.
-
-> Orden y formato de los campos implementados contra el documento oficial de la
-> AEAT (copia en `docs/aeat/`). Los vectores oficiales estan clavados en
-> `tests/test_huella_vectores_aeat.py` y corren en CI: si la huella no coincide
-> con el calculo de la AEAT, el registro se marca "Aceptado con errores".
-
-## Puesta en marcha (dev)
+## Puesta en marcha
 
 ```bash
 python3.11 -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-
-# infra local
-docker compose up -d db redis
-
-# tests (el motor Verifactu no necesita DB)
-pytest -q
-
-# API
-uvicorn app.main:app --reload --app-dir src
-# -> http://localhost:8000/docs
+pytest -q          # los tests que necesitan Postgres se saltan solos si no hay base
 ```
 
-Emitir una factura (sin DB):
+Con Postgres, para ejecutar también esos 32 tests:
 
 ```bash
-curl -s -X POST http://localhost:8000/facturas/emitir \
-  -H 'content-type: application/json' \
-  -d '{"nif_emisor":"B12345678","serie":"A/2026","ultimo_numero":0,
-       "fecha_expedicion":"2026-01-15","generado_en":"2026-01-15T10:30:00+01:00",
-       "lineas":[{"descripcion":"Consultoria","cantidad":"10","precio":"60"}]}'
+docker compose up -d db      # crea el rol "guagua" y las bases guagua y guagua_test
+alembic upgrade head
+pytest -q
 ```
 
-Endpoints: `POST /facturas/emitir`, `POST /facturas/anular`,
-`POST /facturas/verificar-cadena`.
+Sin Docker: instala Postgres 16 y crea el rol y las bases a mano
+(`CREATE ROLE guagua LOGIN PASSWORD 'guagua' CREATEDB;`, ver `docker/init.sql`).
+**El rol de la aplicación no puede ser superusuario**: los superusuarios se
+saltan el RLS aunque esté forzado.
 
-## Proximos pasos
+API:
 
-Ver `docs/PLAN.md` (roadmap Fase 0–1).
+```bash
+API_KEY=una-clave uvicorn app.main:app --app-dir src --reload   # http://localhost:8000/docs
 
-- [x] **Huella validada contra los vectores oficiales de la AEAT** (gate Fase 0)
-- [x] Motor de calculo de factura (IVA, recargo, desglose, totales)
-- [x] Emision / anulacion con encadenamiento verificable
-- [x] Migraciones con RLS y append-only *(escritas; falta probarlas con Postgres)*
-- [ ] Descargar diseno de registros + XSD oficiales *(en curso: cowork)*
-- [ ] Serializacion a XML contra el XSD (`verifactu/xml.py`)
-- [ ] Cliente del web service AEAT (pruebas) con cola de reintentos
-- [x] Confirmar URL/parametros del QR contra la spec oficial
-- [ ] Persistencia + auth multi-tenant (E5)
-- [ ] Modelo 303 (E4)
+curl -s -X POST http://localhost:8000/facturas/emitir \
+  -H 'X-API-Key: una-clave' -H 'content-type: application/json' \
+  -d '{"nif_emisor":"B12345678","serie":"A/2026","ultimo_numero":0,
+       "fecha_expedicion":"2026-01-15","generado_en":"2026-01-15T10:30:00+01:00",
+       "lineas":[{"descripcion":"Consultoría","cantidad":"10","precio":"60"}]}'
+```
+
+Sin `API_KEY` configurada la API responde 503 en lugar de quedarse abierta.
+
+## Documentación
+
+- `docs/PLAN.md`: plan técnico y desglose de fases.
+- `docs/GUIA.md`: qué hace cada módulo y qué falta para entregarlo.
+- `docs/aeat/`: especificaciones oficiales de la AEAT en las que se apoya el código.

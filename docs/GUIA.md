@@ -1,7 +1,6 @@
 # Guagua Contable — guía de entrega
 
 Motor de facturación con cumplimiento Verifactu para la AEAT.
-Versión web de este documento: https://claude.ai/code/artifact/1611b33b-ed3b-449a-9a97-5943d0eb6e7c
 
 ## Estado
 

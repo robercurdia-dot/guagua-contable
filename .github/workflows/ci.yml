@@ -6,6 +6,18 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -15,7 +27,14 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
+      - name: Preparar Postgres
+        # El rol de la app no puede ser superusuario: se saltaria el RLS.
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -c "CREATE ROLE guagua LOGIN PASSWORD 'guagua' CREATEDB"
+          psql -h localhost -U postgres -c "CREATE DATABASE guagua_test OWNER guagua"
       - name: Lint
-        run: ruff check src tests
+        run: ruff check src tests migrations
       - name: Tests
         run: pytest -q
